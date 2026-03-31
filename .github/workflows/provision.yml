@@ -1,0 +1,234 @@
+name: Provision Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_type:
+        description: "Stack template to provision"
+        required: true
+        type: choice
+        options:
+          - webapi
+          - worker
+          - static-site
+      project_name:
+        description: "Project name (lowercase, hyphens only, 3-20 chars)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      owner_tag:
+        description: "Owning team or individual (e.g. platform-team)"
+        required: true
+        type: string
+      cost_center_tag:
+        description: "Cost center code (e.g. CC-1042)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write   # required for OIDC login to Azure
+  contents: read
+
+env:
+  TF_VERSION: "1.7.5"
+  STACK_DIR: stacks/${{ inputs.stack_type }}
+  STATE_KEY: ${{ inputs.project_name }}-${{ inputs.environment }}.tfstate
+  TF_VAR_project_name: ${{ inputs.project_name }}
+  TF_VAR_environment: ${{ inputs.environment }}
+  TF_VAR_owner: ${{ inputs.owner_tag }}
+  TF_VAR_cost_center: ${{ inputs.cost_center_tag }}
+
+jobs:
+  # ──────────────────────────────────────────────
+  # JOB 1: Validate inputs and Terraform config
+  # ──────────────────────────────────────────────
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate project name format
+        run: |
+          echo "${{ inputs.project_name }}" \
+            | grep -qE '^[a-z][a-z0-9-]{2,19}$' \
+            || (echo "::error::project_name must be lowercase, start with a letter, hyphens allowed, 3-20 chars" && exit 1)
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        run: |
+          terraform -chdir=${{ env.STACK_DIR }} init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ env.STATE_KEY }}"
+
+      - name: Terraform validate
+        run: terraform -chdir=${{ env.STACK_DIR }} validate
+
+  # ──────────────────────────────────────────────
+  # JOB 2: Plan and upload artifact
+  # ──────────────────────────────────────────────
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    needs: validate
+
+    outputs:
+      # Exposes whether any changes were detected, so apply can skip if clean
+      has_changes: ${{ steps.check.outputs.has_changes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        run: |
+          terraform -chdir=${{ env.STACK_DIR }} init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ env.STATE_KEY }}"
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          terraform -chdir=${{ env.STACK_DIR }} plan \
+            -detailed-exitcode \
+            -out=tfplan \
+            2>&1 | tee plan.log
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        # Exit codes: 0 = no changes, 1 = error, 2 = changes present
+        continue-on-error: true
+
+      - name: Check plan exit code
+        id: check
+        run: |
+          CODE=${{ steps.plan.outputs.exit_code }}
+          if [ "$CODE" = "1" ]; then
+            echo "::error::Terraform plan failed"
+            exit 1
+          elif [ "$CODE" = "2" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "::notice::No infrastructure changes detected"
+          fi
+
+      - name: Upload plan artifact
+        if: steps.check.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.project_name }}-${{ inputs.environment }}
+          path: ${{ env.STACK_DIR }}/tfplan
+          retention-days: 1
+
+  # ──────────────────────────────────────────────
+  # JOB 3: Apply (gated by environment rules)
+  # ──────────────────────────────────────────────
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.has_changes == 'true'
+
+    # This line is what enables manual approval for prod.
+    # Go to Settings > Environments > prod and add required reviewers.
+    # For dev/staging this resolves immediately with no gate.
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.project_name }}-${{ inputs.environment }}
+          path: ${{ env.STACK_DIR }}
+
+      - name: Terraform init
+        run: |
+          terraform -chdir=${{ env.STACK_DIR }} init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ env.STATE_KEY }}"
+
+      - name: Terraform apply
+        run: terraform -chdir=${{ env.STACK_DIR }} apply -auto-approve tfplan
+
+      - name: Capture outputs as JSON
+        id: outputs
+        run: |
+          terraform -chdir=${{ env.STACK_DIR }} output -json > tf-outputs.json
+          cat tf-outputs.json
+
+      - name: Post outputs to blob storage
+        run: |
+          az storage blob upload \
+            --account-name ${{ secrets.TF_STATE_SA }} \
+            --container-name provisioner-outputs \
+            --name "${{ inputs.project_name }}-${{ inputs.environment }}.json" \
+            --file tf-outputs.json \
+            --overwrite \
+            --auth-mode login
+
+      - name: Summary
+        run: |
+          echo "## Provisioning complete" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | ${{ inputs.stack_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Project | ${{ inputs.project_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| State key | ${{ env.STATE_KEY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Outputs" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat tf-outputs.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
