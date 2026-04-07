@@ -9,8 +9,7 @@ on:
         type: choice
         options:
           - webapi
-          - worker
-          - static-site
+
       project_name:
         description: "Project name (lowercase, hyphens only, 3-20 chars)"
         required: true
@@ -128,7 +127,7 @@ jobs:
           terraform -chdir=${{ env.STACK_DIR }} plan \
             -detailed-exitcode \
             -out=tfplan \
-            2>&1 | tee plan.log
+            2>&1 | tee ${{ env.STACK_DIR }}/plan.log
           echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
         # Exit codes: 0 = no changes, 1 = error, 2 = changes present
         continue-on-error: true
