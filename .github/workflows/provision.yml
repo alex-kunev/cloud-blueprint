@@ -1,34 +1,49 @@
 name: Provision Environment
 
 on:
+  # Automatic: push to gitflow long-lived branches triggers the relevant environment.
+  # Only fires when Terraform source files change.
+  push:
+    branches:
+      - develop   # → dev
+      - main      # → prod
+    paths:
+      - "stacks/**"
+      - "modules/**"
+      - ".provision.yml"
+
+  # Manual: all inputs are optional — they override .provision.yml when provided.
   workflow_dispatch:
     inputs:
       stack_type:
-        description: "Stack template to provision"
-        required: true
+        description: "Stack template (overrides .provision.yml)"
+        required: false
+        default: ""
         type: choice
         options:
+          - ""
           - webapi
-
       project_name:
-        description: "Project name (lowercase, hyphens only, 3-20 chars)"
-        required: true
+        description: "Project name (overrides .provision.yml)"
+        required: false
         type: string
       environment:
-        description: "Target environment"
-        required: true
+        description: "Target environment (auto = derive from branch)"
+        required: false
+        default: "auto"
         type: choice
         options:
+          - auto
           - dev
           - staging
           - prod
       owner_tag:
-        description: "Owning team or individual (e.g. platform-team)"
-        required: true
+        description: "Owning team or individual (overrides .provision.yml)"
+        required: false
         type: string
       cost_center_tag:
-        description: "Cost center code (e.g. CC-1042)"
-        required: true
+        description: "Cost center code (overrides .provision.yml)"
+        required: false
         type: string
 
 permissions:
@@ -37,12 +52,6 @@ permissions:
 
 env:
   TF_VERSION: "1.7.5"
-  STACK_DIR: stacks/${{ inputs.stack_type }}
-  STATE_KEY: ${{ inputs.project_name }}-${{ inputs.environment }}.tfstate
-  TF_VAR_project_name: ${{ inputs.project_name }}
-  TF_VAR_environment: ${{ inputs.environment }}
-  TF_VAR_owner: ${{ inputs.owner_tag }}
-  TF_VAR_cost_center: ${{ inputs.cost_center_tag }}
   ARM_USE_OIDC: "true"
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -50,11 +59,72 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────
+  # JOB 0: Resolve config from .provision.yml + trigger context
+  # ──────────────────────────────────────────────
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+
+    outputs:
+      project_name:    ${{ steps.resolve.outputs.project_name }}
+      stack_type:      ${{ steps.resolve.outputs.stack_type }}
+      environment:     ${{ steps.resolve.outputs.environment }}
+      owner_tag:       ${{ steps.resolve.outputs.owner_tag }}
+      cost_center_tag: ${{ steps.resolve.outputs.cost_center_tag }}
+      stack_dir:       ${{ steps.resolve.outputs.stack_dir }}
+      state_key:       ${{ steps.resolve.outputs.state_key }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve config
+        id: resolve
+        run: |
+          # Read base values from config file
+          PROJECT_NAME=$(grep '^project_name:'    .provision.yml | cut -d: -f2 | xargs)
+          STACK_TYPE=$(grep   '^stack_type:'      .provision.yml | cut -d: -f2 | xargs)
+          OWNER_TAG=$(grep    '^owner_tag:'       .provision.yml | cut -d: -f2 | xargs)
+          COST_CENTER=$(grep  '^cost_center_tag:' .provision.yml | cut -d: -f2 | xargs)
+
+          # workflow_dispatch inputs override config file when provided
+          [ -n "${{ inputs.project_name }}" ]    && PROJECT_NAME="${{ inputs.project_name }}"
+          [ -n "${{ inputs.stack_type }}" ]      && STACK_TYPE="${{ inputs.stack_type }}"
+          [ -n "${{ inputs.owner_tag }}" ]       && OWNER_TAG="${{ inputs.owner_tag }}"
+          [ -n "${{ inputs.cost_center_tag }}" ] && COST_CENTER="${{ inputs.cost_center_tag }}"
+
+          # Determine environment: explicit input wins, then branch mapping
+          INPUT_ENV="${{ inputs.environment }}"
+          if [ -n "$INPUT_ENV" ] && [ "$INPUT_ENV" != "auto" ]; then
+            ENV="$INPUT_ENV"
+          elif [ "${{ github.ref_name }}" = "main" ]; then
+            ENV="prod"
+          else
+            ENV="dev"
+          fi
+
+          echo "project_name=$PROJECT_NAME"               >> $GITHUB_OUTPUT
+          echo "stack_type=$STACK_TYPE"                   >> $GITHUB_OUTPUT
+          echo "environment=$ENV"                         >> $GITHUB_OUTPUT
+          echo "owner_tag=$OWNER_TAG"                     >> $GITHUB_OUTPUT
+          echo "cost_center_tag=$COST_CENTER"             >> $GITHUB_OUTPUT
+          echo "stack_dir=stacks/$STACK_TYPE"             >> $GITHUB_OUTPUT
+          echo "state_key=${PROJECT_NAME}-${ENV}.tfstate" >> $GITHUB_OUTPUT
+
+  # ──────────────────────────────────────────────
   # JOB 1: Validate inputs and Terraform config
   # ──────────────────────────────────────────────
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    needs: setup
+    env:
+      STACK_DIR:           ${{ needs.setup.outputs.stack_dir }}
+      STATE_KEY:           ${{ needs.setup.outputs.state_key }}
+      TF_VAR_project_name: ${{ needs.setup.outputs.project_name }}
+      TF_VAR_environment:  ${{ needs.setup.outputs.environment }}
+      TF_VAR_owner:        ${{ needs.setup.outputs.owner_tag }}
+      TF_VAR_cost_center:  ${{ needs.setup.outputs.cost_center_tag }}
 
     steps:
       - name: Checkout
@@ -62,7 +132,7 @@ jobs:
 
       - name: Validate project name format
         run: |
-          echo "${{ inputs.project_name }}" \
+          echo "${{ needs.setup.outputs.project_name }}" \
             | grep -qE '^[a-z][a-z0-9-]{2,19}$' \
             || (echo "::error::project_name must be lowercase, start with a letter, hyphens allowed, 3-20 chars" && exit 1)
 
@@ -95,11 +165,17 @@ jobs:
   plan:
     name: Plan
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [setup, validate]
+    env:
+      STACK_DIR:           ${{ needs.setup.outputs.stack_dir }}
+      STATE_KEY:           ${{ needs.setup.outputs.state_key }}
+      TF_VAR_project_name: ${{ needs.setup.outputs.project_name }}
+      TF_VAR_environment:  ${{ needs.setup.outputs.environment }}
+      TF_VAR_owner:        ${{ needs.setup.outputs.owner_tag }}
+      TF_VAR_cost_center:  ${{ needs.setup.outputs.cost_center_tag }}
 
     outputs:
-      # Exposes whether any changes were detected, so apply can skip if clean
-      has_changes: ${{ steps.check.outputs.has_changes }}
+      has_changes: ${{ steps.checkDD.outputs.has_changes }}
 
     steps:
       - name: Checkout
@@ -155,7 +231,7 @@ jobs:
         if: steps.checkDD.outputs.has_changes == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-${{ inputs.project_name }}-${{ inputs.environment }}
+          name: tfplan-${{ needs.setup.outputs.project_name }}-${{ needs.setup.outputs.environment }}
           path: ${{ env.STACK_DIR }}/tfplan
           retention-days: 1
 
@@ -165,13 +241,20 @@ jobs:
   apply:
     name: Apply
     runs-on: ubuntu-latest
-    needs: plan
+    needs: [setup, plan]
     if: needs.plan.outputs.has_changes == 'true'
 
     # This line is what enables manual approval for prod.
     # Go to Settings > Environments > prod and add required reviewers.
     # For dev/staging this resolves immediately with no gate.
-    environment: ${{ inputs.environment }}
+    environment: ${{ needs.setup.outputs.environment }}
+    env:
+      STACK_DIR:           ${{ needs.setup.outputs.stack_dir }}
+      STATE_KEY:           ${{ needs.setup.outputs.state_key }}
+      TF_VAR_project_name: ${{ needs.setup.outputs.project_name }}
+      TF_VAR_environment:  ${{ needs.setup.outputs.environment }}
+      TF_VAR_owner:        ${{ needs.setup.outputs.owner_tag }}
+      TF_VAR_cost_center:  ${{ needs.setup.outputs.cost_center_tag }}
 
     steps:
       - name: Checkout
@@ -192,7 +275,7 @@ jobs:
       - name: Download plan artifact
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-${{ inputs.project_name }}-${{ inputs.environment }}
+          name: tfplan-${{ needs.setup.outputs.project_name }}-${{ needs.setup.outputs.environment }}
           path: ${{ env.STACK_DIR }}
 
       - name: Terraform init
@@ -217,7 +300,7 @@ jobs:
           az storage blob upload \
             --account-name ${{ secrets.TF_STATE_SA }} \
             --container-name provisioner-outputs \
-            --name "${{ inputs.project_name }}-${{ inputs.environment }}.json" \
+            --name "${{ needs.setup.outputs.project_name }}-${{ needs.setup.outputs.environment }}.json" \
             --file tf-outputs.json \
             --overwrite \
             --auth-mode login
@@ -227,10 +310,10 @@ jobs:
           echo "## Provisioning complete" >> $GITHUB_STEP_SUMMARY
           echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Stack | ${{ inputs.stack_type }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Project | ${{ inputs.project_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| State key | ${{ env.STATE_KEY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Stack | ${{ needs.setup.outputs.stack_type }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Project | ${{ needs.setup.outputs.project_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ needs.setup.outputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| State key | ${{ needs.setup.outputs.state_key }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Outputs" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
