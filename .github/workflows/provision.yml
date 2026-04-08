@@ -124,6 +124,7 @@ jobs:
       - name: Terraform plan
         id: plan
         run: |
+          set +e +o pipefail
           terraform -chdir=${{ env.STACK_DIR }} plan \
             -detailed-exitcode \
             -out=tfplan \
@@ -133,7 +134,7 @@ jobs:
         continue-on-error: true
 
       - name: Check plan exit code
-        id: check
+        id: checkDD
         run: |
           CODE=${{ steps.plan.outputs.exit_code }}
           if [ "$CODE" = "1" ]; then
