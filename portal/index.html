@@ -458,13 +458,18 @@
       });
 
       if (res.status === 204) {
-        // 204 No Content = accepted. Poll for the run link.
+        // 204 No Content = accepted. Poll for the run link, then track status.
         showStatus('queued', '<div class="spinner"></div>',
           '<strong>Workflow dispatched — finding run link…</strong>');
-        const runUrl = await pollForRunUrl();
-        showStatus('success', '&#x2714;&#xFE0F;',
-          `<strong>Workflow started</strong><br>
-           <a href="${runUrl}" target="_blank" rel="noreferrer">View run in GitHub Actions &#x2197;</a>`);
+        const run = await pollForRun();
+        if (run) {
+          await pollRunStatus(run);
+        } else {
+          showStatus('queued', '&#x1F50D;',
+            `<strong>Workflow dispatched</strong><br>
+             Could not locate run automatically.<br>
+             <a href="https://github.com/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions" target="_blank" rel="noreferrer">Check Actions manually &#x2197;</a>`);
+        }
       } else {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.message || `HTTP ${res.status}`);
@@ -479,26 +484,104 @@
     }
   });
 
-  // ── Poll for run URL (GitHub takes ~1s to create the run record) ───────────
-  async function pollForRunUrl(attempts = 8, delayMs = 1500) {
+  // ── Poll for run object (GitHub takes ~1-2s to create the run record) ───
+  async function pollForRun(attempts = 10, delayMs = 1500) {
     const runsUrl = `https://api.github.com/repos/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions/runs?event=workflow_dispatch&per_page=5`;
-    const headers = {
-      'Authorization': `Bearer ${CONFIG.githubToken}`,
-      'Accept': 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
     const dispatched = Date.now();
 
     for (let i = 0; i < attempts; i++) {
       await sleep(delayMs);
-      const res = await fetch(runsUrl, { headers });
+      const res = await fetch(runsUrl, { headers: ghHeaders() });
       if (!res.ok) break;
       const { workflow_runs } = await res.json();
       const run = workflow_runs.find(r => new Date(r.created_at).getTime() >= dispatched - 5000);
-      if (run) return run.html_url;
+      if (run) return run;
     }
+    return null;
+  }
 
-    return `https://github.com/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions`;
+  // ── Poll run status until terminal state ───────────────────────────────────
+  async function pollRunStatus(run, maxMinutes = 30) {
+    const runApiUrl = `https://api.github.com/repos/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions/runs/${run.id}`;
+    const deadline = Date.now() + maxMinutes * 60_000;
+    let lastStatus = '';
+
+    while (Date.now() < deadline) {
+      const res = await fetch(runApiUrl, { headers: ghHeaders() });
+      if (!res.ok) break;
+      const data = await res.json();
+      const { status, conclusion } = data;
+
+      // Update banner on status change
+      if (status !== lastStatus) {
+        lastStatus = status;
+        const link = `<a href="${run.html_url}" target="_blank" rel="noreferrer">View run &#x2197;</a>`;
+
+        if (status === 'queued' || status === 'waiting') {
+          showStatus('queued', '<div class="spinner"></div>',
+            `<strong>Queued${status === 'waiting' ? ' — awaiting approval' : ''}</strong><br>${link}`);
+        } else if (status === 'in_progress') {
+          showStatus('queued', '<div class="spinner"></div>',
+            `<strong>Running…</strong><br>${link}`);
+        } else if (status === 'completed') {
+          if (conclusion === 'success') {
+            let outputsHtml = '';
+            try {
+              outputsHtml = await fetchOutputs();
+            } catch (_) { /* outputs are optional */ }
+            showStatus('success', '&#x2714;&#xFE0F;',
+              `<strong>Provisioning complete</strong><br>${link}${outputsHtml}`);
+          } else {
+            showStatus('error', '&#x274C;',
+              `<strong>Workflow ${conclusion || 'failed'}</strong><br>${link}`);
+          }
+          return;
+        }
+      }
+
+      await sleep(5000);
+    }
+  }
+
+  // ── Fetch Terraform outputs from blob storage ──────────────────────────────
+  async function fetchOutputs() {
+    if (!CONFIG.outputsBlobBaseUrl) return '';
+
+    const blobName = `${state.project_name}-${state.environment}.json`;
+    const url = `${CONFIG.outputsBlobBaseUrl}/${blobName}`;
+
+    const res = await fetch(url);
+    if (!res.ok) return '';
+    const outputs = await res.json();
+
+    // Build a simple table from the Terraform output JSON
+    const rows = Object.entries(outputs)
+      .map(([key, val]) => {
+        const v = val.value !== undefined ? val.value : val;
+        const display = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        return `<tr><td style="padding:4px 12px 4px 0;color:var(--text-muted)">${key}</td>
+                    <td style="padding:4px 0;word-break:break-all">${escapeHtml(display)}</td></tr>`;
+      })
+      .join('');
+
+    return `<details style="margin-top:12px">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px">Terraform outputs</summary>
+      <table style="margin-top:8px;font-size:13px">${rows}</table>
+    </details>`;
+  }
+
+  function escapeHtml(str) {
+    const el = document.createElement('span');
+    el.textContent = str;
+    return el.innerHTML;
+  }
+
+  function ghHeaders() {
+    return {
+      'Authorization': `Bearer ${CONFIG.githubToken}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
   }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
