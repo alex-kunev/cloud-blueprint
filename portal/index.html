@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloud Blueprint — Self-Service Provisioner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0d1117;
+      --surface:     #161b22;
+      --surface-2:   #1c2128;
+      --border:      #30363d;
+      --border-hover:#58a6ff;
+      --text:        #e6edf3;
+      --text-muted:  #7d8590;
+      --accent:      #238636;
+      --accent-hover:#2ea043;
+      --danger:      #da3633;
+      --warning:     #d29922;
+      --info:        #1f6feb;
+      --radius:      8px;
+      --font:        -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse at 20% 0%, rgba(31,111,235,0.06) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 100%, rgba(56,185,80,0.05) 0%, transparent 60%);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 40px 16px 80px;
+    }
+
+    /* ── Layout ── */
+    .page { max-width: 720px; margin: 0 auto; }
+
+    header { margin-bottom: 32px; }
+    header h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+    header p  { color: var(--text-muted); margin-top: 6px; font-size: 15px; }
+
+    .section {
+      margin-bottom: 28px;
+      animation: fadeInUp .4s ease both;
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .section:nth-child(2) { animation-delay: .05s; }
+    .section:nth-child(3) { animation-delay: .1s; }
+    .section:nth-child(4) { animation-delay: .15s; }
+    .section:nth-child(5) { animation-delay: .2s; }
+    .section-label {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ── Stack cards ── */
+    .stack-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 12px;
+    }
+
+    .stack-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      cursor: pointer;
+      transition: border-color .15s, background .15s, transform .2s, box-shadow .2s;
+      user-select: none;
+      position: relative;
+    }
+    .stack-card:hover { 
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 20px 50px rgba(122,92,68,0.22), 0 8px 16px rgba(0,0,0,0.08);
+      border-color: var(--border-hover); 
+    }
+    .stack-card.selected {
+      border-color: var(--border-hover);
+      background: var(--surface-2);
+      box-shadow: 0 0 0 1px var(--border-hover), 0 8px 24px rgba(88,166,255,0.10);
+    }
+    .stack-card .badge {
+      position: absolute;
+      top: 10px; right: 10px;
+      background: var(--info);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 20px;
+    }
+    .stack-card .icon { font-size: 24px; margin-bottom: 8px; }
+    .stack-card .name { font-weight: 600; margin-bottom: 4px; }
+    .stack-card .desc { font-size: 12px; color: var(--text-muted); }
+    .stack-card .resources {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .tag {
+      font-size: 11px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2px 8px;
+      color: var(--text-muted);
+    }
+    .stack-card.selected .tag {
+      border-color: #1f6feb44;
+      background: #1f6feb18;
+      color: #58a6ff;
+    }
+
+    /* ── Environment pills ── */
+    .env-row { display: flex; gap: 8px; }
+    .env-pill {
+      flex: 1;
+      padding: 10px 0;
+      text-align: center;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-weight: 500;
+      transition: border-color .15s, background .15s;
+      user-select: none;
+    }
+    .env-pill:hover { 
+      border-color: var(--border-hover); 
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 20px 50px rgba(122,92,68,0.22), 0 8px 16px rgba(0,0,0,0.08);
+    }
+    .env-pill.selected-dev     { border-color: #3fb950; background: #3fb95015; color: #3fb950; }
+    .env-pill.selected-staging { border-color: var(--warning); background: #d2992215; color: var(--warning); }
+    .env-pill.selected-prod    { border-color: var(--danger); background: #da363315; color: var(--danger); }
+
+    /* ── Form fields ── */
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    .field .hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .field input {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      padding: 8px 12px;
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field input:focus {
+      border-color: var(--border-hover);
+      box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
+    }
+    .field input.invalid { border-color: var(--danger); }
+
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    /* ── Tags ── */
+    .mandatory-tags { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ── Submit ── */
+    .action-bar {
+      margin-top: 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    button[type="submit"] {
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-family: var(--font);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px 24px;
+      cursor: pointer;
+      transition: background .15s, transform .15s, box-shadow .15s;
+      box-shadow: 0 2px 8px rgba(35,134,54,0.25);
+    }
+    button[type="submit"]:hover:not(:disabled) {
+      background: linear-gradient(135deg, var(--accent-hover), #34d058);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(35,134,54,0.35);
+    }
+    button[type="submit"]:active:not(:disabled) {
+      transform: translateY(0);
+      box-shadow: 0 1px 4px rgba(35,134,54,0.2);
+    }
+    button[type="submit"]:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Status banner ── */
+    .status {
+      margin-top: 24px;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      display: none;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .status.visible { display: flex; }
+    .status.queued  { border-color: var(--info);    background: #1f6feb15; }
+    .status.success { border-color: #3fb950;        background: #3fb95015; }
+    .status.error   { border-color: var(--danger);  background: #da363315; }
+
+    .status-icon { font-size: 18px; line-height: 1; margin-top: 1px; }
+    .status-body strong { display: block; margin-bottom: 4px; }
+    .status-body a { color: #58a6ff; }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    /* ── Prod warning ── */
+    .prod-warning {
+      display: none;
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      border: 1px solid var(--warning);
+      background: #d2992210;
+      font-size: 13px;
+      color: var(--warning);
+    }
+    .prod-warning.visible { display: block; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      body { padding: 24px 12px 60px; }
+      header h1 { font-size: 20px; }
+      .stack-grid { grid-template-columns: 1fr; }
+      .env-row { flex-direction: column; }
+      .env-pill { padding: 14px 0; font-size: 15px; }
+      .mandatory-tags { grid-template-columns: 1fr; }
+      .field input { padding: 10px 12px; font-size: 16px; } /* prevent iOS zoom */
+      button[type="submit"] { width: 100%; padding: 14px 24px; font-size: 16px; }
+      .action-bar { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <h1>&#x2601;&#xFE0F; Self-Service Provisioner</h1>
+    <p>Provision a new environment from an approved stack template. The pipeline handles the rest.</p>
+  </header>
+
+  <form id="provision-form" novalidate>
+
+    <!-- ── Step 1: Stack ── -->
+    <div class="section">
+      <div class="section-label">1 &mdash; Choose a stack</div>
+      <div class="stack-grid" id="stack-grid">
+
+        <div class="stack-card" data-stack="webapi">
+          <div class="badge">Available</div>
+          <div class="icon">&#x1F4E1;</div>
+          <div class="name">Web API</div>
+          <div class="desc">Linux App Service with Cosmos DB and Key Vault</div>
+          <div class="resources">
+            <span class="tag">App Service</span>
+            <span class="tag">Cosmos DB</span>
+            <span class="tag">Key Vault</span>
+            <span class="tag">VNet</span>
+          </div>
+        </div>
+
+        <div class="stack-card disabled" data-stack="worker" style="opacity:.45;cursor:not-allowed;">
+          <div class="icon">&#x2699;&#xFE0F;</div>
+          <div class="name">Worker</div>
+          <div class="desc">Background job processor with Service Bus</div>
+          <div class="resources">
+            <span class="tag">Container App</span>
+            <span class="tag">Service Bus</span>
+          </div>
+        </div>
+
+        <div class="stack-card disabled" data-stack="static-site" style="opacity:.45;cursor:not-allowed;">
+          <div class="icon">&#x1F30D;</div>
+          <div class="name">Static Site</div>
+          <div class="desc">Azure Static Web Apps with CDN</div>
+          <div class="resources">
+            <span class="tag">Static Web App</span>
+            <span class="tag">CDN</span>
+          </div>
+        </div>
+
+      </div>
+      <input type="hidden" id="stack_type" name="stack_type" />
+    </div>
+
+    <!-- ── Step 2: Environment ── -->
+    <div class="section">
+      <div class="section-label">2 &mdash; Target environment</div>
+      <div class="env-row" id="env-row">
+        <div class="env-pill" data-env="dev">dev</div>
+        <div class="env-pill" data-env="staging">staging</div>
+        <div class="env-pill" data-env="prod">prod</div>
+      </div>
+      <input type="hidden" id="environment" name="environment" />
+      <div class="prod-warning" id="prod-warning">
+        &#x26A0;&#xFE0F; <strong>Production deployment</strong> — this will require reviewer approval in GitHub before apply runs.
+      </div>
+    </div>
+
+    <!-- ── Step 3: Project details ── -->
+    <div class="section">
+      <div class="section-label">3 &mdash; Project details</div>
+      <div class="field">
+        <label for="project_name">Project name</label>
+        <input
+          type="text"
+          id="project_name"
+          name="project_name"
+          placeholder="e.g. payments-api"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="hint">Lowercase, letters and hyphens only, 3&ndash;20 characters. Must start with a letter.</div>
+      </div>
+    </div>
+
+    <!-- ── Step 4: Ownership tags ── -->
+    <div class="section">
+      <div class="section-label">4 &mdash; Ownership &amp; cost</div>
+      <div class="mandatory-tags">
+        <div class="field">
+          <label for="owner_tag">Owner</label>
+          <input
+            type="text"
+            id="owner_tag"
+            name="owner_tag"
+            placeholder="e.g. platform-team"
+            autocomplete="off"
+          />
+          <div class="hint">Team or individual responsible for this environment.</div>
+        </div>
+        <div class="field">
+          <label for="cost_center_tag">Cost center</label>
+          <input
+            type="text"
+            id="cost_center_tag"
+            name="cost_center_tag"
+            placeholder="e.g. CC-1042"
+            autocomplete="off"
+          />
+          <div class="hint">Finance tracking code.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Submit ── -->
+    <div class="action-bar">
+      <button type="submit" id="submit-btn" disabled>Provision environment</button>
+      <span id="validation-msg" style="color:var(--text-muted);font-size:13px;">Complete all fields to continue</span>
+    </div>
+
+  </form>
+
+  <!-- ── Status ── -->
+  <div class="status" id="status-banner">
+    <div id="status-icon" class="status-icon"></div>
+    <div class="status-body" id="status-body"></div>
+  </div>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+  // ── State ──────────────────────────────────────────────────────────────────
+  const state = {
+    stack_type:       null,
+    environment:      null,
+    project_name:     '',
+    owner_tag:        '',
+    cost_center_tag:  '',
+  };
+
+  // ── Stack selection ────────────────────────────────────────────────────────
+  document.querySelectorAll('.stack-card:not(.disabled)').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.stack-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      state.stack_type = card.dataset.stack;
+      document.getElementById('stack_type').value = state.stack_type;
+      validate();
+    });
+  });
+
+  // ── Environment selection ──────────────────────────────────────────────────
+  document.querySelectorAll('.env-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      document.querySelectorAll('.env-pill').forEach(p => p.className = 'env-pill');
+      const env = pill.dataset.env;
+      pill.classList.add(`selected-${env}`);
+      state.environment = env;
+      document.getElementById('environment').value = env;
+      document.getElementById('prod-warning').classList.toggle('visible', env === 'prod');
+      validate();
+    });
+  });
+
+  // ── Text inputs ────────────────────────────────────────────────────────────
+  const PROJECT_RE = /^[a-z][a-z0-9-]{2,19}$/;
+
+  function bindInput(id) {
+    const el = document.getElementById(id);
+    el.addEventListener('input', () => {
+      state[id] = el.value.trim();
+      if (id === 'project_name') {
+        el.classList.toggle('invalid', state[id] !== '' && !PROJECT_RE.test(state[id]));
+      }
+      validate();
+    });
+  }
+  bindInput('project_name');
+  bindInput('owner_tag');
+  bindInput('cost_center_tag');
+
+  // ── Validation ─────────────────────────────────────────────────────────────
+  function validate() {
+    const ok =
+      state.stack_type &&
+      state.environment &&
+      PROJECT_RE.test(state.project_name) &&
+      state.owner_tag.length >= 2 &&
+      state.cost_center_tag.length >= 2;
+
+    const btn = document.getElementById('submit-btn');
+    const msg = document.getElementById('validation-msg');
+    btn.disabled = !ok;
+
+    if (!ok) {
+      const missing = [];
+      if (!state.stack_type)                         missing.push('stack');
+      if (!state.environment)                        missing.push('environment');
+      if (!PROJECT_RE.test(state.project_name))      missing.push('valid project name');
+      if (state.owner_tag.length < 2)                missing.push('owner');
+      if (state.cost_center_tag.length < 2)          missing.push('cost center');
+      msg.textContent = `Missing: ${missing.join(', ')}`;
+    } else {
+      msg.textContent = '';
+    }
+  }
+
+  // ── Dispatch ───────────────────────────────────────────────────────────────
+  document.getElementById('provision-form').addEventListener('submit', async e => {
+    e.preventDefault();
+
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Dispatching…';
+    showStatus('queued', '<div class="spinner"></div>', '<strong>Sending to GitHub Actions…</strong>');
+
+    const url = `https://api.github.com/repos/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions/workflows/${CONFIG.workflowFile}/dispatches`;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${CONFIG.githubToken}`,
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ref: CONFIG.defaultBranch,
+          inputs: {
+            stack_type:     state.stack_type,
+            project_name:   state.project_name,
+            environment:    state.environment,
+            owner_tag:      state.owner_tag,
+            cost_center_tag: state.cost_center_tag,
+          },
+        }),
+      });
+
+      if (res.status === 204) {
+        // 204 No Content = accepted. Poll for the run link, then track status.
+        showStatus('queued', '<div class="spinner"></div>',
+          '<strong>Workflow dispatched — finding run link…</strong>');
+        const run = await pollForRun();
+        if (run) {
+          await pollRunStatus(run);
+        } else {
+          showStatus('queued', '&#x1F50D;',
+            `<strong>Workflow dispatched</strong><br>
+             Could not locate run automatically.<br>
+             <a href="https://github.com/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions" target="_blank" rel="noreferrer">Check Actions manually &#x2197;</a>`);
+        }
+      } else {
+        const body = await res.json().catch(() => ({}));
+        const msg = body.message || `HTTP ${res.status}`;
+        if (res.status === 403 || msg.toLowerCase().includes('accessible')) {
+          throw new Error(
+            `${msg}<br><br>` +
+            `The <code>PORTAL_DISPATCH_TOKEN</code> secret must be a ` +
+            `<a href="https://github.com/settings/tokens/new?scopes=workflow" target="_blank" rel="noreferrer">classic PAT</a> ` +
+            `with the <strong>workflow</strong> scope — the built-in <code>GITHUB_TOKEN</code> cannot dispatch workflows.`
+          );
+        }
+        throw new Error(msg);
+      }
+    } catch (err) {
+      showStatus('error', '&#x274C;',
+        `<strong>Dispatch failed</strong><br>${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Provision environment';
+      validate();
+    }
+  });
+
+  // ── Poll for run object (GitHub takes ~1-2s to create the run record) ───
+  async function pollForRun(attempts = 10, delayMs = 1500) {
+    const runsUrl = `https://api.github.com/repos/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions/runs?event=workflow_dispatch&per_page=5`;
+    const dispatched = Date.now();
+
+    for (let i = 0; i < attempts; i++) {
+      await sleep(delayMs);
+      const res = await fetch(runsUrl, { headers: ghHeaders() });
+      if (!res.ok) break;
+      const { workflow_runs } = await res.json();
+      const run = workflow_runs.find(r => new Date(r.created_at).getTime() >= dispatched - 5000);
+      if (run) return run;
+    }
+    return null;
+  }
+
+  // ── Poll run status until terminal state ───────────────────────────────────
+  async function pollRunStatus(run, maxMinutes = 30) {
+    const runApiUrl = `https://api.github.com/repos/${CONFIG.githubOwner}/${CONFIG.githubRepo}/actions/runs/${run.id}`;
+    const deadline = Date.now() + maxMinutes * 60_000;
+    let lastStatus = '';
+
+    while (Date.now() < deadline) {
+      const res = await fetch(runApiUrl, { headers: ghHeaders() });
+      if (!res.ok) break;
+      const data = await res.json();
+      const { status, conclusion } = data;
+
+      // Update banner on status change
+      if (status !== lastStatus) {
+        lastStatus = status;
+        const link = `<a href="${run.html_url}" target="_blank" rel="noreferrer">View run &#x2197;</a>`;
+
+        if (status === 'queued' || status === 'waiting') {
+          showStatus('queued', '<div class="spinner"></div>',
+            `<strong>Queued${status === 'waiting' ? ' — awaiting approval' : ''}</strong><br>${link}`);
+        } else if (status === 'in_progress') {
+          showStatus('queued', '<div class="spinner"></div>',
+            `<strong>Running…</strong><br>${link}`);
+        } else if (status === 'completed') {
+          if (conclusion === 'success') {
+            let outputsHtml = '';
+            try {
+              outputsHtml = await fetchOutputs();
+            } catch (_) { /* outputs are optional */ }
+            showStatus('success', '&#x2714;&#xFE0F;',
+              `<strong>Provisioning complete</strong><br>${link}${outputsHtml}`);
+          } else {
+            showStatus('error', '&#x274C;',
+              `<strong>Workflow ${conclusion || 'failed'}</strong><br>${link}`);
+          }
+          return;
+        }
+      }
+
+      await sleep(5000);
+    }
+  }
+
+  // ── Fetch Terraform outputs from blob storage ──────────────────────────────
+  async function fetchOutputs() {
+    if (!CONFIG.outputsBlobBaseUrl) return '';
+
+    const blobName = `${state.project_name}-${state.environment}.json`;
+    const url = `${CONFIG.outputsBlobBaseUrl}/${blobName}`;
+
+    const res = await fetch(url);
+    if (!res.ok) return '';
+    const outputs = await res.json();
+
+    // Build a simple table from the Terraform output JSON
+    const rows = Object.entries(outputs)
+      .map(([key, val]) => {
+        const v = val.value !== undefined ? val.value : val;
+        const display = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        return `<tr><td style="padding:4px 12px 4px 0;color:var(--text-muted)">${key}</td>
+                    <td style="padding:4px 0;word-break:break-all">${escapeHtml(display)}</td></tr>`;
+      })
+      .join('');
+
+    return `<details style="margin-top:12px">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px">Terraform outputs</summary>
+      <table style="margin-top:8px;font-size:13px">${rows}</table>
+    </details>`;
+  }
+
+  function escapeHtml(str) {
+    const el = document.createElement('span');
+    el.textContent = str;
+    return el.innerHTML;
+  }
+
+  function ghHeaders() {
+    return {
+      'Authorization': `Bearer ${CONFIG.githubToken}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ── Status banner helper ───────────────────────────────────────────────────
+  function showStatus(type, iconHTML, bodyHTML) {
+    const banner = document.getElementById('status-banner');
+    banner.className = `status visible ${type}`;
+    document.getElementById('status-icon').innerHTML = iconHTML;
+    document.getElementById('status-body').innerHTML = bodyHTML;
+  }
+</script>
+</body>
+</html>
