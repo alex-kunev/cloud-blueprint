@@ -11,10 +11,6 @@ variable "sku" {
   type    = string
   default = "B2"
 }
-variable "provisioner_ip" {
-  type    = string
-  default = ""
-}
 
 locals {
   name = "${var.project_name}-${var.environment}"
@@ -47,7 +43,6 @@ module "key_vault" {
   resource_group = azurerm_resource_group.this.name
   location       = var.location
   subnet_id      = module.networking.app_subnet_id
-  provisioner_ip = var.provisioner_ip
   tags           = local.tags
 }
 

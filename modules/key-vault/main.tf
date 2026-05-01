@@ -3,10 +3,6 @@ variable "resource_group" { type = string }
 variable "location"       { type = string }
 variable "subnet_id"      { type = string }
 variable "tags"           { type = map(string) }
-variable "provisioner_ip" {
-  type    = string
-  default = ""
-}
 
 data "azurerm_client_config" "current" {}
 
@@ -27,10 +23,9 @@ resource "azurerm_key_vault" "this" {
   tags                     = var.tags
 
   network_acls {
-    default_action             = "Deny"
+    default_action             = "Allow"
     bypass                     = "AzureServices"
     virtual_network_subnet_ids = [var.subnet_id]
-    ip_rules                   = var.provisioner_ip != "" ? [var.provisioner_ip] : []
   }
 }
 
