@@ -1,0 +1,6 @@
+# Static provisioning config — values here are used by push-triggered runs
+# and as defaults for workflow_dispatch (manual inputs override these).
+project_name:    my-project
+stack_type:      webapi
+owner_tag:       platform-team
+cost_center_tag: CC-1042
