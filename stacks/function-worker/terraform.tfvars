@@ -1,0 +1,5 @@
+project_name = "my-project"
+environment  = "dev"
+location     = "westeurope"
+owner        = "platform-team"
+cost_center  = "CC-1042"
