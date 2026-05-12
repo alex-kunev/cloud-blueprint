@@ -1,9 +1,11 @@
-// ⚠️  DO NOT commit real tokens to this file.
-//     For GitHub Pages, inject these values at build time
-//     via the deploy-portal workflow (see .github/workflows/deploy-portal.yml).
+// ⚠️  No real tokens shall be committed to this file!
 //
-//     For local development, copy this file to config.local.js,
-//     fill in real values, and load that instead.
+// For GitHub Pages: 
+// - inject these values at build time via the deploy-portal workflow
+//
+// For local development: 
+//  - copy this file to config.local.js,
+//  - fill in real values, and load that instead.
 
 const CONFIG = {
   githubOwner:        '__GITHUB_OWNER__',

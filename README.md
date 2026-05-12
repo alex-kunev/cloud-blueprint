@@ -17,6 +17,7 @@ Production deployments are environment-gated and require manual approval before 
 .
 ├── portal/          # Self-service web UI (GitHub Pages)
 ├── stacks/
+<<<<<<< claude/jovial-mclean-b2bd6f
 │   ├── webapi/          # Terraform stack: resource group, networking, Key Vault, Cosmos DB
 │   └── function-worker/ # Terraform stack: resource group, networking, Key Vault, Function App
 ├── modules/
@@ -25,6 +26,14 @@ Production deployments are environment-gated and require manual approval before 
 │   ├── cosmos/       # Cosmos DB (serverless, VNet-filtered)
 │   ├── app-service/  # Linux App Service with managed identity (optional)
 │   └── function-app/ # Linux Function App (consumption) with managed identity
+=======
+│   └── webapi/      # Terraform stack: resource group, networking, Key Vault, Cosmos DB
+├── modules/
+│   ├── networking/  # VNet, subnets, service endpoints
+│   ├── key-vault/   # Key Vault with RBAC and network ACLs
+│   ├── cosmos/      # Cosmos DB (serverless, VNet-filtered)
+│   └── app-service/ # Linux App Service with managed identity (optional)
+>>>>>>> main
 ├── .github/
 │   └── workflows/
 │       ├── provision.yml      # Infrastructure provisioning pipeline
@@ -37,9 +46,14 @@ Production deployments are environment-gated and require manual approval before 
 | Stack | Resources |
 |---|---|
 | `webapi` | Resource Group, VNet/Subnets, Key Vault, Cosmos DB (serverless) |
+<<<<<<< claude/jovial-mclean-b2bd6f
 | `function-worker` | Resource Group, VNet/Subnets, Key Vault, Function App (consumption), Storage |
 
 The `static-site` stack is a stub and appears as a disabled option in the portal UI.
+=======
+
+Additional stacks (worker, static-site) are stubs — they appear as disabled options in the portal UI.
+>>>>>>> main
 
 ## Prerequisites
 
@@ -132,4 +146,8 @@ Requires Azure credentials in your environment (`az login` or environment variab
 - **Cosmos DB serverless** — Zero cost at idle; no provisioned throughput to manage.
 - **Managed identity** — App Service accesses Key Vault via Azure AD; no passwords stored.
 - **State isolation** — Each project + environment pair has its own state file to prevent blast radius.
+<<<<<<< claude/jovial-mclean-b2bd6f
 - **Zero-backend portal** — The portal is a static site with no server; all logic runs client-side against the GitHub API.
+=======
+- **Zero-backend portal** — The portal is a static site with no server; all logic runs client-side against the GitHub API.
+>>>>>>> main
