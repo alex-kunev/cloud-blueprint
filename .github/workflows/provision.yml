@@ -23,6 +23,7 @@ on:
         options:
           - ""
           - webapi
+          - function-worker
       project_name:
         description: "Project name (overrides .provision.yml)"
         required: false
